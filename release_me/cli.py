@@ -15,96 +15,160 @@
 
 from __future__ import print_function
 
-from . import client
-
-import pkg_resources
 import argparse
 import json
+import logging
+import os
 import sys
 
+from release_me.client import GithubClient
 
-def get_client(token):
+
+class ArgParser(argparse.ArgumentParser):
+    """
+    Argument parser that displays help on error
+    """
+
+    def error(self, message):
+        sys.stderr.write("error: {}\n".format(message))
+        self.print_help()
+        sys.exit(2)
+
+    def add_subparsers(self):
+        # Workaround for http://bugs.python.org/issue9253
+        subparsers = super(ArgParser, self).add_subparsers()
+        subparsers.required = True
+        subparsers.dest = "command"
+        return subparsers
+
+
+def _get_client(logger):
     try:
-        c = client.GithubClient(token)
-    except client.GithubClientError as e:
-        print("ERROR: {}".format(e.msg))
+        token = os.environ["RELEASEME_TOKEN"]
+        client = GithubClient(token)
+    except client.GithubClientError as error:
+        logger.error(error)
         sys.exit(1)
-    return c
+    except KeyError:
+        logger.error("Missing access token. Set RELEASEME_TOKEN env variable.")
+        sys.exit(1)
+    return client
 
 
-def check_repo(c, repo):
-    repo_exists, _ = c.get_repo(repo)
+def check_repo(client, logger, repo):
+    repo_exists, _ = client.get_repo(repo)
     if not repo_exists:
-        print("ERROR: invalid repo '{}'".format(args.repo))
+        logger.error("Invalid repository '{}'".format(repo))
         sys.exit(1)
 
 
-def create_release(args):
+def create_release(client, logger, args):
     """
     Create new Github release.
     """
-    c = get_client(args.token)
-    check_repo(c, args.repo)
+    check_repo(client, logger, args.repo)
 
+    logger.info("Creating release for tag {} {}".format(args.repo, args.tag))
     notes = args.notes.read()
-    created, r = c.create_release(args.repo, args.tag, notes)
+    created, response = client.create_release(args.repo, args.tag, notes)
     if not created:
-        print("Error:\n'{}'".format(json.dumps(r, indent=2)))
+        logger.error(response)
         sys.exit(1)
 
+    release_id = response["id"]
+    assets = [] if args.asset is None else args.asset
+    for asset in assets:
+        logger.info("Uploading asset {} for {}".format(asset, release_id))
+        success, response = client.upload_asset(args.repo, release_id, asset)
+        if not success:
+            logger.error(response)
 
-def delete_release(args):
+
+def delete_release(client, logger, args):
     """
     Delete Github release
     """
-    c = get_client(args.token)
-    check_repo(c, args.repo)
-    success, release = c.get_release(args.repo, args.tag)
+    check_repo(client, logger, args.repo)
+
+    logger.info("Getting release for tag {}".format(args.tag))
+    success, release = client.get_release(args.repo, args.tag)
     if not success:
-        print("Error: release '{}' not found.".format(args.tag))
+        logger.error("Release {} {} not found.".format(args.repo, args.tag))
         sys.exit(1)
 
-    deleted, r = c.delete_release(args.repo, release["id"])
-    print(json.dumps(release, indent=2))
+    logger.info("Deleting release for tag {}".format(args.tag))
+    deleted, response = client.delete_release(args.repo, release["id"])
     if not deleted:
-        print("Error:\n'{}'".format(json.dumps(r, indent=2)))
+        logger.error(response)
         sys.exit(1)
 
 
-def add_common_params(parser):
-    parser.add_argument("--token", required=True,
-                        help="Github OAuth token")
-    parser.add_argument("--repo", required=True,
+def get_release(client, logger, args):
+    """
+    Get Github release for selected tag
+    """
+    check_repo(client, logger, args.repo)
+
+    logger.info("Getting release for tag {}".format(args.tag))
+    success, release = client.get_release(args.repo, args.tag)
+    if not success:
+        logger.error("Release {} {} not found.".format(args.repo, args.tag))
+        sys.exit(1)
+    print(
+        json.dumps(release, indent=2, separators=(",", ": "), sort_keys=True)
+    )
+
+
+def _add_common_params(parser):
+    parser.add_argument("-r", "--repo", required=True,
                         help="Github repo (eg. tadeboro/release-me)")
-    parser.add_argument("--tag", required=True,
+    parser.add_argument("-t", "--tag", required=True,
                         help="Existing git tag name")
 
 
-def create_parser():
-    parser = argparse.ArgumentParser(description="Github release helper")
-    parser.add_argument(
-        "--version", action="version",
-        version=pkg_resources.get_distribution("release_me").version
-    )
-
+def _create_parser():
+    parser = ArgParser(description="Github release helper",
+                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     subparsers = parser.add_subparsers()
 
-    create_p = subparsers.add_parser("create",
-                                     description=create_release.__doc__)
-    create_p.add_argument("--notes", required=True,
+    get_p = subparsers.add_parser("get", help="Get existing release")
+    get_p.set_defaults(func=get_release)
+    _add_common_params(get_p)
+
+    create_p = subparsers.add_parser("create", help="Create new release")
+    create_p.add_argument("-n", "--notes", required=True,
                           type=argparse.FileType("r"),
                           help="Path to release notes file")
+    create_p.add_argument("-a", "--asset", help="Asset to upload",
+                          action="append", default=[])
     create_p.set_defaults(func=create_release)
-    add_common_params(create_p)
+    _add_common_params(create_p)
 
-    delete_p = subparsers.add_parser("delete")
+    delete_p = subparsers.add_parser("delete", help="Delete release")
     delete_p.set_defaults(func=delete_release)
-    add_common_params(delete_p)
+    _add_common_params(delete_p)
 
     return parser
 
 
+def _setup_logging():
+    fmt_stream = logging.Formatter("[%(levelname)s] - %(message)s")
+    handler_stream = logging.StreamHandler()
+    handler_stream.setFormatter(fmt_stream)
+    handler_stream.setLevel(logging.INFO)
+
+    log = logging.getLogger("fcoclient")
+    log.addHandler(handler_stream)
+    log.setLevel(logging.DEBUG)
+
+    return log
+
+
 def main():
-    parser = create_parser()
+    parser = _create_parser()
     args = parser.parse_args()
-    args.func(args)
+
+    logger = _setup_logging()
+    client = _get_client(logger)
+
+    args.func(client, logger, args)
