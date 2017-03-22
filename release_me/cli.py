@@ -69,8 +69,9 @@ def create_release(client, logger, args):
     check_repo(client, logger, args.repo)
 
     logger.info("Creating release for tag {} {}".format(args.repo, args.tag))
+    name = args.tag if args.name is None else args.name
     notes = args.notes.read()
-    created, response = client.create_release(args.repo, args.tag, notes)
+    created, response = client.create_release(args.repo, args.tag, name, notes)
     if not created:
         logger.error(response)
         sys.exit(1)
@@ -141,6 +142,8 @@ def _create_parser():
                           help="Path to release notes file")
     create_p.add_argument("-a", "--asset", help="Asset to upload",
                           action="append", default=[])
+    create_p.add_argument("-l", "--name", default=None,
+                          help="Release name (if not specified, tag is used)")
     create_p.set_defaults(func=create_release)
     _add_common_params(create_p)
 

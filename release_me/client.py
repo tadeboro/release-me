@@ -71,10 +71,10 @@ class GithubClient:
         resp = self._get(url.format(self.API_ENDPOINT, repo, tag))
         return resp.status_code == 200, resp.json()
 
-    def create_release(self, repo, tag, body):
+    def create_release(self, repo, tag, name, body):
         data = {
             "tag_name": tag,
-            "name": tag,
+            "name": name,
             "body": body,
         }
         url = "{}/repos/{}/releases"
