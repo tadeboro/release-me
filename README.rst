@@ -16,9 +16,9 @@ Installing this package is as simple as running::
 
 This being out of the way, we must now obtain the personal access token that
 this client will use to interact with Github's API. How to get one is neatly
-described on `Gihub's personal access token page`_.
+described on `Github's personal access token page`_.
 
-.. _Github's personal accss token page:
+.. _Github's personal access token page:
     https://help.github.com/articles/creating-a-personal-access-token-for-the-command-line/
 
 Now that we created the token, we must inform our tool about it. We do this by
