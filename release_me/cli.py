@@ -120,6 +120,27 @@ def get_release(client, logger, args):
     )
 
 
+def add_assets(client, logger, args):
+    """
+    Upload additional assets to selected release.
+    """
+    check_repo(client, logger, args.repo)
+
+    logger.info("Getting release for tag {}".format(args.tag))
+    success, release = client.get_release(args.repo, args.tag)
+    if not success:
+        logger.error("Release {} {} not found.".format(args.repo, args.tag))
+        sys.exit(1)
+
+    release_id = release["id"]
+    assets = [] if args.asset is None else args.asset
+    for asset in assets:
+        logger.info("Uploading asset {} for {}".format(asset, release_id))
+        success, response = client.upload_asset(args.repo, release_id, asset)
+        if not success:
+            logger.error(response)
+
+
 def _add_common_params(parser):
     parser.add_argument("-r", "--repo", required=True,
                         help="Github repo (eg. tadeboro/release-me)")
@@ -150,6 +171,14 @@ def _create_parser():
     delete_p = subparsers.add_parser("delete", help="Delete release")
     delete_p.set_defaults(func=delete_release)
     _add_common_params(delete_p)
+
+    add_assets_p = subparsers.add_parser(
+        "add-asset", help="Add additional assets to existing release"
+    )
+    add_assets_p.add_argument("-a", "--asset", help="Asset to upload",
+                          action="append", default=[])
+    add_assets_p.set_defaults(func=add_assets)
+    _add_common_params(add_assets_p)
 
     return parser
 
